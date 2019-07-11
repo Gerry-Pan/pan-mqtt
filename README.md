@@ -9,12 +9,12 @@ public MqttListenerAnnotationBeanPostProcessor mqttListenerAnnotationBeanPostPro
 ```
 
 ```
-@MqttListener(topics = "${mqtt.topic.prefix}zbox/register", qos = 1)
+@MqttListener(topics = "${mqtt.topic.prefix}/register", qos = 1)
 public void handle(Message<String> message) {
  log.info(message);
 }
 ```
-## or
+
 ```
 @MqttListener(beanRef = "#{mqttConfiguration.topicList}", qos = 1)
  public void handle(Message<?> message) {
