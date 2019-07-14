@@ -30,7 +30,7 @@ public MqttPahoMessageDrivenChannelAdapter mqttAdapter() {
 ```
 
 ```
-@MqttListener(topics = "${mqtt.topic.prefix}/register", qos = 1)
+@MqttListener(topics = "${mqtt.topic.prefix}/+/register/#", qos = 1)
 public void handle(Message<String> message) {
  log.info(message);
 }
