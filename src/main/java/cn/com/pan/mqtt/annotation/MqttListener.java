@@ -13,7 +13,7 @@ public @interface MqttListener {
 
 	String[] topics() default {};
 
-	int qos() default 1;
+	int qos() default 0;
 
 	String beanRef() default "";
 

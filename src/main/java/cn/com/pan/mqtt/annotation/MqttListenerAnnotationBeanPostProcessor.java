@@ -13,6 +13,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.aop.framework.Advised;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.BeansException;
@@ -40,9 +42,12 @@ import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
 
 import cn.com.pan.mqtt.config.MethodMqttListenerEndpoint;
+import lombok.Getter;
 
 public class MqttListenerAnnotationBeanPostProcessor
 		implements BeanPostProcessor, BeanFactoryAware, SmartInitializingSingleton {
+
+	protected final Logger log = LogManager.getLogger(getClass());
 
 	private BeanFactory beanFactory;
 
@@ -52,7 +57,7 @@ public class MqttListenerAnnotationBeanPostProcessor
 
 	private final Set<Class<?>> nonAnnotatedClasses = Collections.newSetFromMap(new ConcurrentHashMap<>(64));
 
-	private final List<String> allTopics = new ArrayList<String>();
+	private final List<Topic> allTopicList = new ArrayList<Topic>();
 
 	private final List<MethodMqttListenerEndpoint> endpointList = new ArrayList<MethodMqttListenerEndpoint>();
 
@@ -95,11 +100,21 @@ public class MqttListenerAnnotationBeanPostProcessor
 						Method methodToUse = checkProxy(method, bean);
 						MethodMqttListenerEndpoint endpoint = null;
 
-						String[] topics = resolveTopics(listener);
+						List<Topic> topicList = resolveTopicList(listener);
+						List<String> tempTopics = new ArrayList<String>();
+
+						for (Topic t : topicList) {
+							if (allTopicList.contains(t)) {
+								log.warn("The topic '" + t.getTopic() + "' is duplicate.");
+								continue;
+							}
+							tempTopics.add(t.getTopic());
+							allTopicList.add(t);
+						}
+
+						String[] topics = tempTopics.toArray(new String[tempTopics.size()]);
 
 						if (topics != null && topics.length > 0) {
-							allTopics.addAll(Arrays.asList(topics));
-
 							if (endpoint == null) {
 								endpoint = new MethodMqttListenerEndpoint();
 							}
@@ -125,7 +140,17 @@ public class MqttListenerAnnotationBeanPostProcessor
 	public void afterSingletonsInstantiated() {
 		DirectChannel mqttInputChannel = new DirectChannel();
 
-		adapter.addTopic(allTopics.toArray(new String[allTopics.size()]));
+		String[] topics = new String[allTopicList.size()];
+		int[] qos = new int[allTopicList.size()];
+
+		int i = 0;
+		for (Topic t : allTopicList) {
+			topics[i] = t.getTopic();
+			qos[i] = t.getQos();
+			i++;
+		}
+
+		adapter.addTopics(topics, qos);
 		adapter.setOutputChannel(mqttInputChannel);
 
 		mqttInputChannel.subscribe(message -> {
@@ -274,6 +299,44 @@ public class MqttListenerAnnotationBeanPostProcessor
 	}
 
 	@SuppressWarnings("unchecked")
+	protected List<Topic> resolveTopicList(MqttListener mqttListener) {
+		int qos = mqttListener.qos();
+		List<String> topics = null;
+		List<Topic> topicList = new ArrayList<Topic>();
+		String beanRef = mqttListener.beanRef();
+
+		if (StringUtils.hasText(beanRef)) {
+			Object r = resolveExpression(beanRef);
+
+			if (r instanceof String[]) {
+				topics = Arrays.asList((String[]) resolveExpression(beanRef));
+			} else if (r instanceof List) {
+				topics = (List<String>) resolveExpression(beanRef);
+			}
+
+		}
+
+		if (topics == null) {
+			topics = Arrays.asList(mqttListener.topics());
+		}
+
+		List<String> result = new ArrayList<>();
+		if (topics.size() > 0) {
+			for (int i = 0; i < topics.size(); i++) {
+				Object topic = resolveExpression(topics.get(i));
+				resolveAsString(topic, result);
+			}
+		}
+
+		for (String topic : result) {
+			Topic t = new Topic(topic, qos);
+			topicList.add(t);
+		}
+
+		return topicList;
+	}
+
+	@SuppressWarnings("unchecked")
 	protected void resolveAsString(Object resolvedValue, List<String> result) {
 		if (resolvedValue instanceof String[]) {
 			for (Object object : (String[]) resolvedValue) {
@@ -300,6 +363,48 @@ public class MqttListenerAnnotationBeanPostProcessor
 			return ((ConfigurableBeanFactory) this.beanFactory).resolveEmbeddedValue(value);
 		}
 		return value;
+	}
+
+	protected static final class Topic {
+
+		@Getter
+		private final String topic;
+
+		@Getter
+		private volatile int qos;
+
+		Topic(String topic, int qos) {
+			this.topic = topic;
+			this.qos = qos;
+		}
+
+		@Override
+		public int hashCode() {
+			return this.topic.hashCode();
+		}
+
+		@Override
+		public boolean equals(Object obj) {
+			if (this == obj) {
+				return true;
+			}
+			if (obj == null) {
+				return false;
+			}
+			if (getClass() != obj.getClass()) {
+				return false;
+			}
+			Topic other = (Topic) obj;
+			if (this.topic == null) {
+				if (other.topic != null) {
+					return false;
+				}
+			} else if (!this.topic.equals(other.topic)) {
+				return false;
+			}
+			return true;
+		}
+
 	}
 
 	protected static class ListenerScope implements Scope {
